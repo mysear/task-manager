@@ -1,0 +1,1 @@
+erl -sname taskserver@localhost -s deploy run 
