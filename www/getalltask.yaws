@@ -1,0 +1,36 @@
+<erl module=getalltask_mod>
+
+-compile(export_all).
+
+out(A) ->
+  io:format("Args:~p~n", [A]),
+  Parse = yaws_api:parse_query(A),
+  io:format("parse args:~p~n", [Parse]),
+  dispatch(lkup("op", Parse, false), A, Parse).
+
+dispatch("getalltask", A, L) ->
+  TaskList = task_info:getalltask(),
+  io:format("after encode:~p~n", [TaskList]),
+  J = json2:encode(TaskList),
+  return_json(J);
+dispatch("deletetask", A, L) ->
+  io:format("delete task:~p~n", [L]),
+  [{"op","deletetask"} | TaskName] = L,
+  io:format("Get task names:~p~n", [TaskName]),
+  task_info:deltask(TaskName),
+  dispatch("getalltask", A, L);
+dispatch(Unknown, _A, _L) ->
+  io:format("Get unknow:~p~n", [Unknown]).
+
+return_json(Json) ->
+  {content,
+   "application/json: charset=iso-8859-1",
+   Json}.
+
+lkup(Key, List, Def) ->
+  case lists:keysearch(Key, 1, List) of
+    {value,{_,Value}} -> Value;
+    _                 -> Def
+  end.
+
+</erl>

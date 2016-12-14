@@ -1,0 +1,127 @@
+<erl module=taskupload_mod>
+-compile(export_all).
+
+-record(upload, {fd, filename, last, timeout}).
+-define(DIR, "../www/taskfiles/").
+
+out(A)  when A#arg.state == undefined ->
+    io:format("receive upload event1~n"),
+    State = #upload{},
+    multipart(A, State);
+out(A) ->
+    io:format("receive upload event2~n"),
+    multipart(A, A#arg.state).
+
+err() ->
+    {ehtml,
+     {p, [], "error"}}.
+
+multipart(A, State) ->
+    Parse = yaws_api:parse_multipart_post(A),
+    io:format("Args:~p~n", [Parse]),
+    case Parse of
+        {cont, Cont, Res} ->
+            case classifypart(A, Res, State) of
+                {done, Result} ->
+                    Result;
+                {cont, NewState} ->
+                    {get_more, Cont, NewState}
+            end;
+        {result, Res} ->
+            case classifypart(A, Res, State#upload{last=true}) of
+                {done, Result} ->
+                    Result;
+                {cont, _} ->
+                    err()
+            end;
+        {error, _Reason} ->
+            err()
+    end.
+
+classifypart(A, [{head, {"loop_timer", _Opts}}, {body, Data} | Res], State) ->
+  classifypart(A, Res, State#upload{timeout=Data});
+classifypart(A, [{head, {_Name, Opts}}, {part_body, Data} | Res], State) ->
+  classifypart(A, [{head, {_Name, Opts}}, {body, Data} | Res], State);
+classifypart(A, [{body, Data}|Res], State)
+  when State#upload.filename /= undefined ->
+    case file:write(State#upload.fd, Data) of
+        ok ->
+            io:format("write file content~n"),
+            classifypart(A, Res, State);
+        Err ->
+            io:format("write file error~n"),
+            {done, err()}
+    end;
+classifypart(A, [{head, {_Name, Opts}}, {body, Data} | Res], State) ->
+  case addFileChunk(A, Opts, Data, State) of
+        {done, NewState} ->
+          io:format("addFileChunk finish~n"),
+          classifypart(A, Res, NewState);
+        false ->
+          io:format("not find file name, continue~n"),
+          classifypart(A,Res,State);
+        {undone, _Error} ->
+          io:format("addFileChunk error~n"),
+          {done, err()}
+  end;
+classifypart(_A, [], State) when State#upload.last==true,
+                                 State#upload.filename /= undefined,
+                                 State#upload.fd /= undefined ->
+  file:close(State#upload.fd),
+  io:format("classify multi part completely~n"),
+  io:format("state{fd=~p, filename=~p, last=~p, timeout=~p}~n",
+            [State#upload.fd, State#upload.filename, State#upload.last, State#upload.timeout]),
+  TimeStamp = os:timestamp(),
+  io:format("time is ~p~n", [calendar:now_to_universal_time(TimeStamp)]),
+  db_api:add_task(State#upload.filename, State#upload.timeout, loop, TimeStamp),
+  Res= {ehtml, {p, [], "finish"}},
+  {done, Res};
+classifypart(A, [], State) when State#upload.last==true ->
+    io:format("No content last is true~n"),
+    {done, err()};
+classifypart(_A, [], State) ->
+    io:format("no content without last is true~n"),
+    {cont, State};
+classifypart(_A, _, _State) ->
+  {done, err()}.
+
+
+addFileChunk(_A, Opts, Data, State) ->
+  case lists:keysearch("filename", 1, Opts) of 
+    {value, {_, Fname0}} ->
+      Fname = yaws_api:sanitize_file_name(basename(Fname0)),
+      io:format("save upload file ~p~n", [Fname]),
+      file:make_dir(?DIR),
+      case file:open([?DIR, Fname] ,[write]) of
+        {ok, Fd} ->
+          S2 = State#upload{filename = Fname,
+                            fd = Fd},
+          case file:write(S2#upload.fd, Data) of
+            ok ->
+              io:format("write file content~n"),
+              {done, S2};
+            Err ->
+              io:format("write file error~n"),
+              {undone, err()}
+            end;
+        Err ->
+          {undone, err()}
+      end;
+    false ->
+      io:format("not find file name, continue~n"),
+      false
+  end.
+
+
+basename(FilePath) ->
+    case string:rchr(FilePath, $\\) of
+        0 ->
+            %% probably not a DOS name
+            filename:basename(FilePath);
+        N ->
+            %% probably a DOS name, remove everything after last \
+            basename(string:substr(FilePath, N+1))
+    end.
+
+
+</erl>

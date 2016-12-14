@@ -1,0 +1,9 @@
+<erl module=taskupload_mod>
+
+-compile(export_all).
+
+out(A) ->
+    Parse = yaws_api:parse_multipart_post(A),
+    task_info:multipart(Parse, A#arg.state).
+
+</erl>

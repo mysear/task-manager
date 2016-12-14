@@ -1,0 +1,14 @@
+<erl module=taskupload_js_mod>
+-compile(export_all).
+
+-record(upload, {fd, filename, last, timeout}).
+-define(DIR, "../www/taskfiles/").
+
+out(A) ->
+  yaws_rpc:handler_session(A, {?MODULE, handle}).
+
+handle(_State, {call, _Fun, Opts}, undefined) ->
+  io:format("args:~p~n",[Opts]).
+
+
+</erl>
